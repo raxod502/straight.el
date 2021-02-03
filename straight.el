@@ -55,6 +55,8 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+;;(require 'straight-watcher)
+(declare-function straight-watcher--load-repos "straight-watcher")
 
 ;;;; Backports
 
@@ -730,23 +732,6 @@ the straight/versions/ directory itself."
   "Get a file in the straight/versions/ directory.
 SEGMENTS are passed to `straight--file'."
   (apply #'straight--file "versions" segments))
-
-(defun straight--watcher-dir (&rest segments)
-  "Get a subdirectory of the straight/watcher/ directory.
-SEGMENTS are passed to `straight--dir'. With no SEGMENTS, return
-the straight/watcher/ directory itself."
-  (apply #'straight--dir "watcher" segments))
-
-(defun straight--watcher-file (&rest segments)
-  "Get a file in the straight/watcher/ directory.
-SEGMENTS are passed to `straight--file'."
-  (apply #'straight--file "watcher" segments))
-
-(defun straight--watcher-python ()
-  "Get the path to the filesystem virtualenv's Python executable."
-  (if (straight--windows-os-p)
-      (straight--watcher-file "virtualenv" "Scripts" "python.exe")
-    (straight--watcher-file "virtualenv" "bin" "python")))
 
 (defun straight--versions-lockfile (profile)
   "Get the version lockfile for given PROFILE, a symbol."
@@ -3973,8 +3958,12 @@ empty values (all packages will be rebuilt, with no caching)."
           (setq straight--build-cache-text (buffer-string))
           (when (or (straight--modifications 'check-on-save)
                     (straight--modifications 'watch-files))
-            (when-let ((repos (condition-case _ (straight--directory-files
-                                                 (straight--modified-dir))
+            (when-let ((repos (condition-case _
+                                  (cl-union
+                                   (straight-watcher--load-repos)
+                                   (straight--directory-files
+                                    (straight--modified-dir))
+                                   :test #'string=)
                                 (file-missing))))
               ;; Cause live-modified repos to have their packages
               ;; rebuilt when appropriate. Just in case init is
@@ -4083,109 +4072,11 @@ straight.el, according to the value of
 `straight-check-for-modifications'."
   :global t
   :group 'straight
+  ;;@TODO: stop running straight-watcher process
+  ;; Trying to support both simultaneously is more trouble than it's worth.
   (if straight-live-modifications-mode
       (add-hook 'before-save-hook #'straight-register-file-modification)
     (remove-hook 'before-save-hook #'straight-register-file-modification)))
-
-;;;;; Filesystem watcher
-
-(defcustom straight-watcher-process-buffer " *straight-watcher*"
-  "Name of buffer to use for the filesystem watcher."
-  :type 'string)
-
-(defun straight-watcher--make-process-buffer ()
-  "Kill and recreate `straight-watcher-process-buffer'. Return it."
-  (ignore-errors
-    (kill-buffer straight-watcher-process-buffer))
-  (let ((buf (get-buffer-create straight-watcher-process-buffer)))
-    (prog1 buf
-      (with-current-buffer buf
-        (special-mode)))))
-
-(cl-defun straight-watcher--virtualenv-setup ()
-  "Set up the virtualenv for the filesystem watcher.
-If it fails, signal a warning and return nil."
-  (let* ((virtualenv (straight--watcher-dir "virtualenv"))
-         (python (straight--watcher-python))
-         (straight-dir (file-name-directory straight--this-file))
-         (watcher-dir (expand-file-name "watcher" straight-dir))
-         (version-from (expand-file-name "version" watcher-dir))
-         (version-to (straight--watcher-file "version")))
-    (condition-case _
-        (delete-directory virtualenv 'recursive)
-      (file-missing))
-    (make-directory
-     (file-name-directory
-      (directory-file-name virtualenv))
-     'parents)
-    (and (straight--process-run "python3" "-m" "venv" virtualenv)
-         (straight--process-run python "-m" "pip" "install" "-e" watcher-dir)
-         (prog1 t (copy-file version-from version-to
-                             'ok-if-already-exists)))))
-
-(defun straight-watcher--virtualenv-outdated ()
-  "Return non-nil if the watcher virtualenv needs to be set up again.
-This includes the case hwere it doesn't yet exist."
-  (let* ((straight-dir (file-name-directory straight--this-file))
-         (watcher-dir (expand-file-name "watcher" straight-dir))
-         (version-from (expand-file-name "version" watcher-dir))
-         (version-to (straight--watcher-file "version")))
-    (not (straight--process-run-p "diff" "-q" version-from version-to))))
-
-(cl-defun straight-watcher-start ()
-  "Start the filesystem watcher, killing any previous instance.
-If it fails, signal a warning and return nil."
-  (interactive)
-  (unless straight-safe-mode
-    (unless (executable-find "python3")
-      (straight--warn
-       "Cannot start filesystem watcher without 'python3' installed")
-      (cl-return-from straight-watcher-start))
-    (unless (executable-find "watchexec")
-      (straight--warn
-       "Cannot start filesystem watcher without 'watchexec' installed")
-      (cl-return-from straight-watcher-start))
-    (when (straight-watcher--virtualenv-outdated)
-      (straight--output "Setting up filesystem watcher...")
-      (unless (straight-watcher--virtualenv-setup)
-        (straight--output "Setting up filesystem watcher...failed")
-        (cl-return-from straight-watcher-start))
-      (straight--output "Setting up filesystem watcher...done"))
-    (with-current-buffer (straight-watcher--make-process-buffer)
-      (let* ((python (straight--watcher-python))
-             (cmd (list
-                   ;; Need to disable buffering, otherwise we don't
-                   ;; get some important stuff printed.
-                   python "-u" "-m" "straight_watch" "start"
-                   (straight--watcher-file "process")
-                   (straight--repos-dir)
-                   (straight--modified-dir)))
-             (sh (concat
-                  "exec nohup "
-                  (mapconcat #'shell-quote-argument cmd " "))))
-        ;; Put the 'nohup.out' file in the ~/.emacs.d/straight/watcher/
-        ;; directory.
-        (setq default-directory (straight--watcher-dir))
-        ;; Clear it out, since nohup(1) doesn't overwrite it.
-        (condition-case _
-            (delete-file (straight--watcher-file "nohup.out"))
-          (file-missing))
-        (let ((inhibit-read-only t))
-          (insert "$ " sh "\n\n"))
-        (start-file-process-shell-command
-         "straight-watcher" straight-watcher-process-buffer sh)
-        (set-process-query-on-exit-flag
-         (get-buffer-process (current-buffer)) nil)))))
-
-(defun straight-watcher-stop ()
-  "Kill the filesystem watcher, if it is running.
-If there is an unexpected error, signal a warning and return nil."
-  (interactive)
-  (unless straight-safe-mode
-    (let ((python (straight--watcher-python)))
-      (when (file-executable-p python)
-        (straight--process-run python "-m" "straight_watch" "stop"
-                               (straight--watcher-file "process"))))))
 
 ;;;;; Bulk checking
 

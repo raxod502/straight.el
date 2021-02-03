@@ -10,7 +10,7 @@ BUTTERCUP ?= ../emacs-buttercup/
 
 # The order is important for compilation.
 for_compile := straight.el bootstrap.el install.el straight-x.el	\
-	benchmark/straight-bench.el
+	straight-watcher.el benchmark/straight-bench.el
 for_checkdoc := straight.el
 for_longlines := $(wildcard *.el *.md *.yml benchmark/*.el	\
 	scripts/*.bash) Makefile
