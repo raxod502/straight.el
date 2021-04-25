@@ -56,7 +56,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 ;;(require 'straight-watcher)
-(declare-function straight-watcher--load-repos "straight-watcher")
+(declare-function straight-watcher-modified-repos "straight-watcher")
 
 ;;;; Backports
 
@@ -3960,7 +3960,7 @@ empty values (all packages will be rebuilt, with no caching)."
                     (straight--modifications 'watch-files))
             (when-let ((repos (condition-case _
                                   (cl-union
-                                   (straight-watcher--load-repos)
+                                   (straight-watcher-modified-repos)
                                    (straight--directory-files
                                     (straight--modified-dir))
                                    :test #'string=)
@@ -4202,15 +4202,14 @@ The value of this variable is only relevant when
 (cl-defun straight--package-might-be-modified-p (recipe no-build)
   "Check whether the package for the given RECIPE should be rebuilt.
 If NO-BUILD is non-nil, then don't assume that the package should
-have a build directory; only check for modifications since the
-last time."
+have a build directory."
   (straight--with-plist recipe
       (package local-repo)
     (let* (;; `build-info' is a list of length three containing the
-           ;; timestamp of the last build, the list of dependencies,
+           ;; hash of the last build :files content, the list of dependencies,
            ;; and the recipe plist, in that order.
            (build-info (gethash package straight--build-cache))
-           (last-mtime (nth 0 build-info))
+           (content (nth 0 build-info))
            (last-recipe (nth 2 build-info)))
       (or (null build-info)
           ;; Rebuild if relevant parts of the recipe have changed.
@@ -4227,45 +4226,14 @@ last time."
             ;; on disk, you know.
             (unless local-repo
               (cl-return-from straight--package-might-be-modified-p))
-            ;; Don't look at mtimes unless we're told to. Otherwise,
-            ;; rely on live modification checking/user attention.
-            (unless (or (straight--modifications 'find-at-startup)
-                        (and (straight--modifications 'find-when-checking)
-                             straight--allow-find))
-              (cl-return-from straight--package-might-be-modified-p))
             (straight--make-package-modifications-available)
             (if (straight--checkhash
                  local-repo straight--cached-package-modifications)
                 ;; Use the cached modification status if we've computed
                 ;; one.
                 (gethash local-repo straight--cached-package-modifications)
-              ;; `last-mtime' should always be a string but you never
-              ;; know.
-              (or (not (stringp last-mtime))
-                  (with-temp-buffer
-                    (let ((newer-or-newermt nil)
-                          (mtime-or-file nil))
-                      (if (straight--find-supports 'newermt)
-                          (progn
-                            (setq newer-or-newermt "-newermt")
-                            (setq mtime-or-file last-mtime))
-                        (setq newer-or-newermt "-newer")
-                        (setq mtime-or-file
-                              (straight--make-mtime last-mtime)))
-                      (let* ((default-directory
-                               (straight--repos-dir local-repo))
-                             ;; This find(1) command ignores the .git
-                             ;; directory, and prints the names of any
-                             ;; files or directories with a newer
-                             ;; mtime than the one specified.
-                             (results (straight--process-output
-                                       straight-find-executable
-                                       "." "-name" ".git" "-prune"
-                                       "-o" newer-or-newermt mtime-or-file
-                                       "-print")))
-                        ;; If anything was printed, the package has
-                        ;; (maybe) been modified.
-                        (not (string-empty-p results))))))))))))
+              (;;check against modified-repos
+               (straight-watcher-repo-modified-p package))))))))
 
 ;;;; Building packages
 

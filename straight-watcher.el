@@ -3,21 +3,16 @@
 ;;; Commentary:
 ;;
 
-(require 'cl-lib)
 (require 'filenotify)
+(require 'straight)
 
 ;;; Code:
-;;;; Declarations
-(declare-function straight--determine-repo  "straight")
-(declare-function straight--directory-files "straight")
-(declare-function straight--file            "straight")
-(declare-function straight--repos-dir       "straight")
-(defvar straight-safe-mode)
-
 ;;;; Variables
-(defvar straight-watcher-file "modified-repos.el" "Modified repos file name.")
+(defvar straight-watcher-file "watcher-cache.el"
+  "File name for the watcher's repo contents cache.")
 (defvar straight-watchers nil "List of registered notification objects.")
-(defvar straight-watcher-modified-repos nil "List of modified repositories.")
+(defvar straight-watcher-repos (make-hash-table :test 'equal)
+  "Hash table of observed repositories.")
 (defvar straight-watcher-timers (make-hash-table :test 'equal)
   "Hash of REPO -> timers.")
 
@@ -35,11 +30,10 @@ See `run-at-time' for acceptable values."
 
 ;;;; Functions
 (defun straight-watcher--load-repos ()
-  "Read `straight-watcher-file' into `straight-modified-repos'."
+  "Read `straight-watcher-file' into `straight-watcher-repos'."
   (with-current-buffer (find-file-noselect
                         (straight--file straight-watcher-file))
-    (setq straight-watcher-modified-repos (read (buffer-string)))))
-;;(straight-watcher--load-repos)
+    (setq straight-watcher-repos (read (buffer-string)))))
 
 (defun straight-watcher--directories ()
   "Return a list of directories to register file notification watchers on."
@@ -52,7 +46,6 @@ See `run-at-time' for acceptable values."
                                 (straight--directory-files dir nil 'full)))
                       (straight--directory-files (straight--repos-dir)
                                                  nil 'full)))))
-;;(straight-watcher--directories)
 
 (defun straight-watcher--write-changed ()
   "Write changed repos to `straight-watcher-file'."
@@ -65,7 +58,7 @@ See `run-at-time' for acceptable values."
             (coding-system-for-write 'utf-8)
             (standard-output (current-buffer)))
         (erase-buffer)
-        (print straight-watcher-modified-repos))
+        (print straight-watcher-repos))
       (write-file path))))
 
 (defun straight-watcher--add-watches (files callback)
@@ -83,8 +76,7 @@ CALLBACK is called with a `file-notify' event as its sole argument."
            (format-time-string "[%Y-%m-%d %H:%M:%S]")
            repo)
   (remhash repo straight-watcher-timers)
-  (setq straight-watcher-modified-repos
-        (delete-dups (push repo straight-watcher-modified-repos)))
+  (puthash repo (straight--hash-repo-files repo) straight-watcher-repos)
   (straight-watcher--write-changed))
 
 (defun straight-watcher--register-change-maybe (event)
@@ -101,32 +93,48 @@ CALLBACK is called with a `file-notify' event as its sole argument."
                                  repo)
                straight-watcher-timers))))
 
+(defun straight-watcher-repo-modified-p (package)
+  "Return t if PACKAGE's repo hash does not match `straight--build-cache'."
+  (not (equal (nth 0 (gethash package straight--build-cache))
+         (gethash package straight-watcher-repos))))
+
+(defun straight-watcher-modified-repos ()
+  "Return a list of modified repos."
+  (straight-watcher--load-repos)
+  (let (repos)
+    (maphash
+     (lambda (repo hash)
+       (unless (equal hash (nth 0 (gethash repo straight--build-cache)))
+         (setq repos (push repo repos))))
+     straight-watcher-repos)
+    repos))
+
 ;;;; Commands
 ;;;###autoload
-;;@INCOMPLETE:
-;; - implement local vs child process
-;; - kill previous instances
-(defun straight-watcher-start (&optional _local)
-  "Start the filesystem watcher, killing any previous instance.
+         ;;@INCOMPLETE:
+         ;; - implement local vs child process
+         ;; - kill previous instances
+         (defun straight-watcher-start (&optional _local)
+           "Start the filesystem watcher, killing any previous instance.
 If LOCAL is non-nil, the watcher is launched from the current Emacs process.
 Else, it is launched in a persistent child process.
 If the watcher fails to start, signal a warning and return nil."
-  (interactive "P")
-  (unless straight-safe-mode
-    (straight-watcher--add-watches (straight-watcher--directories)
-                                   #'straight-watcher--register-change-maybe)))
+           (interactive "P")
+           (unless straight-safe-mode
+             (straight-watcher--add-watches (straight-watcher--directories)
+                                            #'straight-watcher--register-change-maybe)))
 
 ;;;###autoload
-;;@INCOMPLETE:
-;; - kill child process (once implemented)
-(defun straight-watcher-stop ()
-  "Kill the filesystem watcher, if it is running.
+         ;;@INCOMPLETE:
+         ;; - kill child process (once implemented)
+         (defun straight-watcher-stop ()
+           "Kill the filesystem watcher, if it is running.
 If there is an unexpected error, signal a warning and return nil."
-  (interactive)
-  (unless straight-safe-mode
-    (while straight-watchers
-      (file-notify-rm-watch (pop straight-watchers)))))
+           (interactive)
+           (unless straight-safe-mode
+             (while straight-watchers
+               (file-notify-rm-watch (pop straight-watchers)))))
 
-(provide 'straight-watcher)
+         (provide 'straight-watcher)
 
 ;;; straight-watcher.el ends here
