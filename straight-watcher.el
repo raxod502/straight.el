@@ -108,7 +108,7 @@ CALLBACK is called with a `file-notify' event as its sole argument."
   (when straight-watcher-repos
     (when-let ((build (nth 0 (gethash package straight--build-cache)))
                (hash (gethash package straight-watcher-repos)))
-  (not (equal build hash)))))
+      (not (equal build hash)))))
 
 (defun straight-watcher-modified-repos ()
   "Return a list of modified repos."
@@ -123,30 +123,31 @@ CALLBACK is called with a `file-notify' event as its sole argument."
 
 ;;;; Commands
 ;;;###autoload
-         ;;@INCOMPLETE:
-         ;; - implement local vs child process
-         ;; - kill previous instances
-         (defun straight-watcher-start (&optional _local)
-           "Start the filesystem watcher, killing any previous instance.
+;;@INCOMPLETE:
+;; - implement local vs child process
+;; - kill previous instances
+(defun straight-watcher-start (&optional _local)
+  "Start the filesystem watcher, killing any previous instance.
 If LOCAL is non-nil, the watcher is launched from the current Emacs process.
 Else, it is launched in a persistent child process.
 If the watcher fails to start, signal a warning and return nil."
-           (interactive "P")
-           (unless straight-safe-mode
-             (straight-watcher--add-watches (straight-watcher--directories)
-                                            #'straight-watcher--register-change-maybe)))
+  (interactive "P")
+  (unless straight-safe-mode
+    (straight-watcher--add-watches
+     (straight-watcher--directories)
+     #'straight-watcher--register-change-maybe)))
 
 ;;;###autoload
-         ;;@INCOMPLETE:
-         ;; - kill child process (once implemented)
-         (defun straight-watcher-stop ()
-           "Kill the filesystem watcher, if it is running.
+;;@INCOMPLETE:
+;; - kill child process (once implemented)
+(defun straight-watcher-stop ()
+  "Kill the filesystem watcher, if it is running.
 If there is an unexpected error, signal a warning and return nil."
-           (interactive)
-           (unless straight-safe-mode
-             (while straight-watchers
-               (file-notify-rm-watch (pop straight-watchers)))))
+  (interactive)
+  (unless straight-safe-mode
+    (while straight-watchers
+      (file-notify-rm-watch (pop straight-watchers)))))
 
-         (provide 'straight-watcher)
+(provide 'straight-watcher)
 
 ;;; straight-watcher.el ends here

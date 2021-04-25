@@ -58,8 +58,9 @@
 ;;@TODO: fix. This is complicated due to the current bootstrap method
 (declare-function straight-watcher-modified-repos  "straight-watcher")
 (declare-function straight-watcher-repo-modified-p "straight-watcher")
-(load-file (expand-file-name "straight-watcher.el"
-                             (file-name-directory (file-truename load-file-name))))
+(load-file (expand-file-name
+            "straight-watcher.el"
+            (file-name-directory (file-truename load-file-name))))
 
 ;;;; Backports
 
@@ -4013,7 +4014,8 @@ modified since their last builds.")
                  (recipe (nth 2 build-info)))
         (when-let (local-repo (plist-get recipe :local-repo))
           (when (straight-watcher-repo-modified-p package)
-            (puthash local-repo content straight--cached-package-modifications)))))))
+            (puthash local-repo content
+                     straight--cached-package-modifications)))))))
 
 (defun straight--uncache-package-modifications ()
   "Reset `straight--cached-package-modifications'."
@@ -4067,7 +4069,7 @@ have a build directory."
                 ;; If available, use the cached modification status.
                 (gethash local-repo straight--cached-package-modifications)
               ;;check against modified-repos
-               (straight-watcher-repo-modified-p package)))))))
+              (straight-watcher-repo-modified-p package)))))))
 
 ;;;; Building packages
 
