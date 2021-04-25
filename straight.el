@@ -4982,11 +4982,11 @@ repository."
 ;;;;; Cache handling
 (defun straight--hash-repo-files (package)
   "Hash PACKAGE's :files."
-  (when-let ((recipe (straight-recipes-retrieve package)))
-    (let* ((recipe (straight--convert-recipe recipe))
+  (when-let ((recipe (gethash package straight--recipe-cache)))
+    (let* ((recipe (straight--convert-recipe (cons (intern package) recipe)))
            (directive (plist-get recipe :files))
            (dir (straight--repos-dir (or (plist-get recipe :local-repo)
-                                         (symbol-name package))))
+                                         package)))
            (files (mapcar
                    #'car (straight-expand-files-directive directive dir nil))))
       (secure-hash
@@ -4994,10 +4994,8 @@ repository."
        (with-temp-buffer
          (dolist (file files (buffer-string))
            (if (file-directory-p file)
-               (dolist (file (directory-files-recursively
-                              "/home/n/.emacs.d/straight/repos/el-get/methods"
-                              ".*"))
-                 (insert-file-contents-literally file))
+               (dolist (f (directory-files-recursively file ".*"))
+                 (insert-file-contents-literally f))
              (insert-file-contents-literally file))))))))
 
 (defun straight--declare-successful-build (recipe)
@@ -5007,8 +5005,7 @@ hash and recipe are updated in `straight--build-cache'."
   (straight--with-plist recipe (package)
     ;; We've rebuilt the package, so its autoloads might have changed.
     (remhash package straight--autoloads-cache)
-    (straight--insert 0 package
-                      (straight--hash-repo-files (intern package))
+    (straight--insert 0 package (straight--hash-repo-files package)
                       straight--build-cache)
     (straight--insert 2 package recipe straight--build-cache)))
 
