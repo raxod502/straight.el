@@ -4984,19 +4984,20 @@ repository."
   "Hash PACKAGE's :files."
   (when-let ((recipe (gethash package straight--recipe-cache)))
     (let* ((recipe (straight--convert-recipe (cons (intern package) recipe)))
-           (directive (plist-get recipe :files))
-           (dir (straight--repos-dir (or (plist-get recipe :local-repo)
-                                         package)))
-           (files (mapcar
-                   #'car (straight-expand-files-directive directive dir nil))))
-      (secure-hash
-       'md5
-       (with-temp-buffer
-         (dolist (file files (buffer-string))
-           (if (file-directory-p file)
-               (dolist (f (directory-files-recursively file ".*"))
-                 (insert-file-contents-literally f))
-             (insert-file-contents-literally file))))))))
+           (directive (plist-get recipe :files)))
+      (when-let ((dir (ignore-errors
+                        (straight--repos-dir (plist-get recipe :local-repo)))))
+        (let ((files
+               (mapcar #'car (straight-expand-files-directive directive
+                                                              dir nil))))
+          (secure-hash
+           'md5
+           (with-temp-buffer
+             (dolist (file files (buffer-string))
+               (if (file-directory-p file)
+                   (dolist (f (directory-files-recursively file ".*"))
+                     (insert-file-contents-literally f))
+                 (insert-file-contents-literally file))))))))))
 
 (defun straight--declare-successful-build (recipe)
   "Update `straight--build-cache' to reflect a successful build of RECIPE.
