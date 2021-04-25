@@ -4989,9 +4989,16 @@ repository."
                                          (symbol-name package))))
            (files (mapcar
                    #'car (straight-expand-files-directive directive dir nil))))
-      (secure-hash 'md5 (with-temp-buffer
-                          (dolist (file files (buffer-string))
-                            (insert-file-contents-literally file)))))))
+      (secure-hash
+       'md5
+       (with-temp-buffer
+         (dolist (file files (buffer-string))
+           (if (file-directory-p file)
+               (dolist (file (directory-files-recursively
+                              "/home/n/.emacs.d/straight/repos/el-get/methods"
+                              ".*"))
+                 (insert-file-contents-literally file))
+             (insert-file-contents-literally file))))))))
 
 (defun straight--declare-successful-build (recipe)
   "Update `straight--build-cache' to reflect a successful build of RECIPE.
