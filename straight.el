@@ -4980,24 +4980,28 @@ repository."
                 (straight--process-run "install-info" info dir)))))))))
 
 ;;;;; Cache handling
+(defun straight--hash-repo-files (package)
+  "Hash PACKAGE's :files."
+  (when-let ((recipe (straight-recipes-retrieve package)))
+    (let* ((recipe (straight--convert-recipe recipe))
+           (directive (plist-get recipe :files))
+           (dir (straight--repos-dir (or (plist-get recipe :local-repo)
+                                         (symbol-name package))))
+           (files (mapcar
+                   #'car (straight-expand-files-directive directive dir nil))))
+      (secure-hash 'md5 (with-temp-buffer
+                          (dolist (file files (buffer-string))
+                            (insert-file-contents-literally file)))))))
 
 (defun straight--declare-successful-build (recipe)
   "Update `straight--build-cache' to reflect a successful build of RECIPE.
-RECIPE should be a straight.el-style plist. The build mtime and
-recipe in `straight--build-cache' for the package are updated."
+RECIPE should be a straight.el-style plist. The package's :files directive
+hash and recipe are updated in `straight--build-cache'."
   (straight--with-plist recipe (package)
     ;; We've rebuilt the package, so its autoloads might have changed.
     (remhash package straight--autoloads-cache)
-    ;; This time format is compatible with:
-    ;;
-    ;; * BSD find shipped with macOS >=10.11
-    ;; * GNU find >=4.4.2
-    ;;
-    ;; Time is rounded up to the next second to avoid spurious
-    ;; rebuilds. find(1) millisecond precision is not guaranteed
-    ;; on all platforms (e.g. Apple).
     (straight--insert 0 package
-                      (format-time-string "%F %T" (time-add nil 1))
+                      (straight--hash-repo-files (intern package))
                       straight--build-cache)
     (straight--insert 2 package recipe straight--build-cache)))
 
