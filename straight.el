@@ -55,8 +55,11 @@
 
 (require 'cl-lib)
 (require 'subr-x)
-;;(require 'straight-watcher)
-(declare-function straight-watcher-modified-repos "straight-watcher")
+;;@TODO: fix. This is complicated due to the current bootstrap method
+(declare-function straight-watcher-modified-repos  "straight-watcher")
+(declare-function straight-watcher-repo-modified-p "straight-watcher")
+(load-file (expand-file-name "straight-watcher.el"
+                             (file-name-directory (file-truename load-file-name))))
 
 ;;;; Backports
 
@@ -1173,59 +1176,6 @@ transaction. In this case, the caller must do this itself."
   (unwind-protect
       (recursive-edit)
     (straight--transaction-finalize)))
-
-;;;; Feature detection
-
-(defcustom straight-find-executable "find"
-  "Executable path of find command used by straight.el."
-  :type 'string)
-
-(defun straight--determine-find-flavor ()
-  "Determine the best default value of `straight-find-flavor'.
-This uses -newermt if possible, and -newer otherwise."
-  (if (straight--process-run-p
-       straight-find-executable
-       "/dev/null" "-newermt" "2018-01-01 12:00:00")
-      `(newermt)
-    nil))
-
-(defcustom straight-find-flavor :guess
-  "What options the available find(1) binary supports.
-This is a list of symbols. If `newermt' is in the list, then
-find(1) is given the `-newermt' option to check for files newer
-than a particular timestamp. Otherwise, it is given the `-newer'
-option instead (this requires creating temporary files with
-particular mtimes, which is slower).
-
-This variable can also be the symbol `:guess', meaning
-straight.el will automatically assign an appropriate value when
-the variable is next read.
-
-For backwards compatibility, the value of this variable may also
-be a symbol, which is translated into a corresponding list as
-follows:
-
-`gnu/bsd' => `(newermt)'
-`busybox' => nil
-
-This usage is deprecated and will be removed."
-  :type '(choice
-          (list
-           (const :tag "Supports -newermt" newermt))
-          (const :tag "Guess a value automatically" :guess)))
-
-(defun straight--find-supports (symbol)
-  "Check if `straight-find-flavor' contains SYMBOL.
-However, if `straight-find-flavor' is itself one of the symbols
-supported for backwards compatibility, account for that
-appropriately."
-  (when (eq straight-find-flavor :guess)
-    (setq straight-find-flavor (straight--determine-find-flavor)))
-  (memq symbol
-        (pcase straight-find-flavor
-          ('gnu/bsd '(newermt))
-          ('busybox nil)
-          (lst lst))))
 
 ;;;; Lockfile utility functions
 
@@ -3762,23 +3712,10 @@ of one of the packages using the local repository."
 
 ;;;; Checking for package modifications
 
-(defun straight--determine-best-modification-checking ()
-  "Determine the best default value of `straight-check-for-modifications'.
-This uses find(1) for all checking on most platforms, and
-`before-save-hook' on Microsoft Windows."
-  (if (straight--windows-os-p)
-      (list 'check-on-save)
-    (list 'find-at-startup 'find-when-checking)))
-
-(defcustom straight-check-for-modifications
-  (straight--determine-best-modification-checking)
+(defcustom straight-check-for-modifications '(watch-files)
   "When to check for package modifications.
-This is a list of symbols. If `find-at-startup' is in the list,
-then find(1) is used to detect modifications of all packages
-before they are made available. If `find-when-checking' is in the
-list, then find(1) is used to detect modifications in
-\\[straight-check-package] and \\[straight-check-all]. If
-`check-on-save' is in the list, then `before-save-hook' is used
+This is a list of symbols.
+ If `check-on-save' is in the list, then `before-save-hook' is used
 to detect modifications of packages that you perform within
 Emacs. If `watch-files' is in the list, then a filesystem watcher
 is automatically started by straight.el to detect modifications.
@@ -3786,33 +3723,10 @@ is automatically started by straight.el to detect modifications.
 Note that the functionality of `check-on-save' and `watch-files'
 only covers modifications made within ~/.emacs.d/straight/repos,
 so if you wish to use these features you should move all of your
-local repositories into that directory.
-
-PERFORMANCE IMPLICATIONS: `at-startup' means straight.el will run
-a command during startup, which can be fairly slow, especially if
-you do not have an SSD. Disable this to improve startup time.
-However, you will still want to have package modifications
-detected. Therefore add either `check-on-save', which has no
-overhead but also does not catch modifications made outside of
-Emacs, or `watch-files', which is more robust but has an external
-dependency (watchexec) and takes up memory / file descriptors.
-
-For backwards compatibility, the value of this variable may also
-be a symbol, which is translated into a corresponding list as
-follows:
-
-`at-startup' => `(find-at-startup find-when-checking)'
-`live' => `(check-on-save)'
-`live-with-find' => `(check-on-save find-when-checking)'
-`never' => nil
-
-This usage is deprecated and will be removed."
+local repositories into that directory."
   :type
   '(repeat
     (choice
-     (const :tag "Use find(1) at startup" find-at-startup)
-     (const :tag "Use find(1) in \\[straight-check-package]"
-            find-when-checking)
      (const :tag "Use `before-save-hook' to detect changes" check-on-save)
      (const :tag "Use a filesystem watcher to detect changes" watch-files))))
 
@@ -4089,95 +4003,17 @@ modified since their last builds.")
 
 (cl-defun straight--cache-package-modifications ()
   "Compute `straight--cached-package-modifications'."
-  (let (;; Keep track of which local repositories we've processed
-        ;; already. This table maps repo names to booleans.
-        (repos (make-hash-table :test #'equal))
-        ;; The systematically generated arguments for find(1).
-        (args-paths nil)
-        (args-primaries nil)
-        (args nil)
-        ;; This list is used to make sure we don't try to search a
-        ;; directory that doesn't exist, which would cause the find(1)
-        ;; command to fail.
-        (existing-repos (straight--directory-files (straight--repos-dir))))
-    (dolist (package straight--eagerly-checked-packages)
-      (when-let ((build-info (gethash package straight--build-cache)))
-        ;; Don't use `cl-destructuring-bind', as that will
-        ;; error out on a list of insufficient length. We
-        ;; want to be robust in the face of a malformed build
-        ;; cache.
-        (let ((mtime (nth 0 build-info))
-              (recipe (nth 2 build-info)))
-          (straight--with-plist recipe
-              (local-repo)
-            (when (and local-repo
-                       (not (gethash local-repo repos))
-                       (member local-repo existing-repos))
-              (if mtime
-                  ;; The basic idea of the find(1) command here is
-                  ;; that we search all the local repositories, and
-                  ;; then the actual primaries evaluated are a
-                  ;; disjunction that first prevents any .git
-                  ;; directories from being traversed and then checks
-                  ;; for any files that are in a given local
-                  ;; repository *and* have a new enough mtime.
-                  ;;
-                  ;; See the following issue for an explanation about
-                  ;; why an extra pair of single quotes is used on
-                  ;; Windows:
-                  ;; <https://github.com/raxod502/straight.el/issues/393>
-                  (let ((newer-or-newermt nil)
-                        (mtime-or-file nil))
-                    (if (straight--find-supports 'newermt)
-                        (progn
-                          (setq newer-or-newermt "-newermt")
-                          (setq mtime-or-file mtime))
-                      (setq newer-or-newermt "-newer")
-                      (setq mtime-or-file (straight--make-mtime mtime)))
-                    (push (straight--repos-dir local-repo) args-paths)
-                    (setq args-primaries
-                          (append (list "-o"
-                                        "-path"
-                                        (expand-file-name
-                                         (if (eq system-type 'windows-nt)
-                                             "'*'"
-                                           "*")
-                                         (straight--repos-dir local-repo))
-                                        newer-or-newermt
-                                        mtime-or-file
-                                        "-print")
-                                  args-primaries)))
-                ;; If no mtime is specified, it means the package
-                ;; definitely needs to be (re)built. Probably there
-                ;; was an error and we couldn't finish building the
-                ;; package, but we wrote the build cache anyway.
-                (puthash
-                 local-repo t straight--cached-package-modifications))
-              ;; Don't create duplicate entries in the find(1) command
-              ;; for this local repository.
-              (puthash local-repo t repos))))))
-    ;; If no packages, abort. This shouldn't happen, but might in the
-    ;; face of other errors/undefined behavior.
-    (unless args-paths
-      (cl-return-from straight--cache-package-modifications))
-    ;; Construct the final find(1) command.
-    (setq args (append
-                args-paths
-                (list "-name" ".git" "-prune")
-                args-primaries))
-    (let* ((default-directory (straight--repos-dir))
-           (results (apply #'straight--process-output
-                           straight-find-executable args)))
-      (maphash (lambda (local-repo _)
-                 (puthash
-                  local-repo (string-match-p
-                              (concat "^"
-                                      (regexp-quote
-                                       (file-name-as-directory
-                                        (straight--repos-dir local-repo))))
-                              results)
-                  straight--cached-package-modifications))
-               repos))))
+  (dolist (package straight--eagerly-checked-packages)
+    (when-let ((build-info (gethash package straight--build-cache)))
+      ;; Don't use `cl-destructuring-bind', as that will
+      ;; error out on a list of insufficient length. We
+      ;; want to be robust in the face of a malformed build
+      ;; cache.
+      (when-let ((content (nth 0 build-info))
+                 (recipe (nth 2 build-info)))
+        (when-let (local-repo (plist-get recipe :local-repo))
+          (when (straight-watcher-repo-modified-p package)
+            (puthash local-repo content straight--cached-package-modifications)))))))
 
 (defun straight--uncache-package-modifications ()
   "Reset `straight--cached-package-modifications'."
@@ -4209,7 +4045,6 @@ have a build directory."
            ;; hash of the last build :files content, the list of dependencies,
            ;; and the recipe plist, in that order.
            (build-info (gethash package straight--build-cache))
-           (content (nth 0 build-info))
            (last-recipe (nth 2 build-info)))
       (or (null build-info)
           ;; Rebuild if relevant parts of the recipe have changed.
@@ -4229,11 +4064,10 @@ have a build directory."
             (straight--make-package-modifications-available)
             (if (straight--checkhash
                  local-repo straight--cached-package-modifications)
-                ;; Use the cached modification status if we've computed
-                ;; one.
+                ;; If available, use the cached modification status.
                 (gethash local-repo straight--cached-package-modifications)
-              (;;check against modified-repos
-               (straight-watcher-repo-modified-p package))))))))
+              ;;check against modified-repos
+               (straight-watcher-repo-modified-p package)))))))
 
 ;;;; Building packages
 

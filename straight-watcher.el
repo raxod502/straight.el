@@ -4,7 +4,15 @@
 ;;
 
 (require 'filenotify)
-(require 'straight)
+;;(require 'straight)
+;;; Declarations
+(defvar straight--build-cache)
+(defvar straight-safe-mode)
+(declare-function straight--determine-repo  "straight")
+(declare-function straight--hash-repo-files "straight")
+(declare-function straight--repos-dir       "straight")
+(declare-function straight--directory-files "straight")
+(declare-function straight--file            "straight")
 
 ;;; Code:
 ;;;; Variables
@@ -95,8 +103,12 @@ CALLBACK is called with a `file-notify' event as its sole argument."
 
 (defun straight-watcher-repo-modified-p (package)
   "Return t if PACKAGE's repo hash does not match `straight--build-cache'."
-  (not (equal (nth 0 (gethash package straight--build-cache))
-         (gethash package straight-watcher-repos))))
+  (straight-watcher--load-repos)
+  ;; File may be missing.
+  (when straight-watcher-repos
+    (when-let ((build (nth 0 (gethash package straight--build-cache)))
+               (hash (gethash package straight-watcher-repos)))
+  (not (equal build hash)))))
 
 (defun straight-watcher-modified-repos ()
   "Return a list of modified repos."
