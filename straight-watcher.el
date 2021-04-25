@@ -8,11 +8,12 @@
 ;;; Declarations
 (defvar straight--build-cache)
 (defvar straight-safe-mode)
-(declare-function straight--determine-repo  "straight")
-(declare-function straight--hash-repo-files "straight")
-(declare-function straight--repos-dir       "straight")
-(declare-function straight--directory-files "straight")
-(declare-function straight--file            "straight")
+(declare-function straight--determine-repo   "straight")
+(declare-function straight--hash-repo-files  "straight")
+(declare-function straight--repos-dir        "straight")
+(declare-function straight--directory-files  "straight")
+(declare-function straight--file             "straight")
+(declare-function straight--load-build-cache "straight")
 
 ;;; Code:
 ;;;; Variables
@@ -84,7 +85,9 @@ CALLBACK is called with a `file-notify' event as its sole argument."
            (format-time-string "[%Y-%m-%d %H:%M:%S]")
            repo)
   (remhash repo straight-watcher-timers)
-  (puthash repo (straight--hash-repo-files repo) straight-watcher-repos)
+  (unless straight--build-cache (straight--load-build-cache))
+  (when (straight-watcher-repo-modified-p repo)
+    (puthash repo (straight--hash-repo-files repo) straight-watcher-repos))
   (straight-watcher--write-changed))
 
 (defun straight-watcher--register-change-maybe (event)
@@ -103,7 +106,7 @@ CALLBACK is called with a `file-notify' event as its sole argument."
 
 (defun straight-watcher-repo-modified-p (package)
   "Return t if PACKAGE's repo hash does not match `straight--build-cache'."
-  (straight-watcher--load-repos)
+  (unless straight-watcher-repos (straight-watcher--load-repos))
   ;; File may be missing.
   (when straight-watcher-repos
     (when-let ((build (nth 0 (gethash package straight--build-cache)))
@@ -112,7 +115,7 @@ CALLBACK is called with a `file-notify' event as its sole argument."
 
 (defun straight-watcher-modified-repos ()
   "Return a list of modified repos."
-  (straight-watcher--load-repos)
+  (unless straight-watcher-repos (straight-watcher--load-repos))
   (let (repos)
     (maphash
      (lambda (repo hash)
