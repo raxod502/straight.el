@@ -218,21 +218,6 @@ return nil."
     (it "defaults to a string"
       (expect (stringp straight-watcher-process-buffer) :to-be t))))
 
-(describe "straight--normalize-alist"
-  (describe "(alist)"
-    (it "does not mutate ALIST"
-      (expect (let ((alist '((a . b) (a . c))))
-                (straight--normalize-alist '((a . b) (a . c)))
-                alist)
-              :to-equal '((a . b) (a . c))))
-    (it "removes duplicate keys"
-      (expect (straight--normalize-alist '((a . b) (a . c)))
-              :to-equal '((a . c)))))
-  (describe "(alist test)"
-    (it "respects TEST function"
-      (expect (straight--normalize-alist '(("a" . b) ("a" . c)) #'equal)
-              :to-equal '(("a" . c))))))
-
 (describe "straight--alist-set"
   (describe "(key val alist)"
     (it "adds (KEY . VAL) to front of ALIST"
