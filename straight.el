@@ -313,20 +313,6 @@ Backward compatible shim for `flatten-tree'."
 
 ;;;;; Association lists
 
-(defun straight--normalize-alist (alist &optional test)
-  "Return copy of ALIST with duplicate keys removed.
-The value for a duplicated key will be the last one in ALIST.
-Duplicates are tested with TEST, which must be accepted by the
-`make-hash-table' function and which defaults to `eq'. The order
-of the entries that are kept will be the same as in ALIST."
-  (let ((hash (make-hash-table :test (or test #'eq)))
-        (new-alist nil))
-    (dolist (entry (reverse alist))
-      (unless (gethash (car entry) hash)
-        (push entry new-alist)
-        (puthash (car entry) t hash)))
-    new-alist))
-
 (defun straight--alist-set (key val alist &optional symbol)
   "Set property KEY to VAL in ALIST. Return new alist.
 This creates the association if it is missing, and otherwise sets
@@ -4768,15 +4754,16 @@ other value, the behavior is not specified."
          ;; subject to removal have already had the exclusions
          ;; applied to them.
          (mappings (car result)))
-    (straight--normalize-alist
-     (mapcar (lambda (mapping)
-               (cl-destructuring-bind (src . dest) mapping
-                 ;; Make the paths absolute.
-                 (cons (expand-file-name src src-dir)
-                       (expand-file-name dest dest-dir))))
-             mappings)
-     ;; Keys are strings.
-     #'equal)))
+    (let ((copy nil)
+          (absolutes (mapcar (lambda (mapping)
+                               (cl-destructuring-bind (src . dest) mapping
+                                 ;; Make the paths absolute.
+                                 (cons (expand-file-name src src-dir)
+                                       (expand-file-name dest dest-dir))))
+                             mappings)))
+      ;; If there are duplicate keys, only keep the last declared cell.
+      (dolist (el (nreverse absolutes) copy)
+        (cl-pushnew el copy :test (lambda (a b) (equal (car a) (car b))))))))
 
 ;;;;; Running Build Commands
 
